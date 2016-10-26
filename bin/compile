@@ -1,13 +1,36 @@
 #!/usr/bin/env bash
-# bin/compile <build-dir> <cache-dir>
 
-# fail fast
-set -e
+# Taken from https://github.com/heroku/heroku-buildpack-python/blob/master/bin/steps/cryptography commit b0138c26e6238ec706aeedf9d8d654a527db3d42
+# I only copied this file and added the python libraries nexmo and pywebpush to the pip-grep line
+
+# This script serves as the Cryptography build step of the
+# [**Python Buildpack**](https://github.com/heroku/heroku-buildpack-python)
+# compiler.
+#
+# A [buildpack](https://devcenter.heroku.com/articles/buildpacks) is an
+# adapter between a Python application and Heroku's runtime.
+#
+# This script is invoked by [`bin/compile`](/).
 
 BUILD_DIR=$1
 
-echo '-----> Rewriting libffi.pc'
-mkdir -p $BUILD_DIR/.heroku/vendor/lib/pkg-config
-sed -e "s%/usr%/app/.apt/usr%" -e "s%Cflags:%Cflags: -I\${includedir}/x86_64-linux-gnu%" -e "s%Libs:%Libs: -L\${libdir}%" < $BUILD_DIR/.apt/usr/lib/pkgconfig/libffi.pc > $BUILD_DIR/.heroku/vendor/lib/pkg-config/libffi.pc
-mkdir -p $BUILD_DIR/.heroku/vendor/lib
-cp $BUILD_DIR/.apt/usr/lib/libffi* $BUILD_DIR/.heroku/vendor/lib
+# The location of the pre-compiled libffi binary.
+DEFAULT_PYTHON_STACK="cedar-14"
+[ ! "$STACK" ] && STACK=$DEFAULT_PYTHON_STACK
+VENDORED_LIBFFI="https://lang-python.s3.amazonaws.com/$STACK/libraries/vendor/libffi.tar.gz"
+
+# Simply exporting PKG_CONFIG_PATH doesn't seem to work. Instead, we create a
+# profile script that updates the PKG_CONFIG_PATH. I saw this method used in
+# heroku-buildpack-apt.
+cat <<EOF >$BUILD_DIR/.profile.d/005_cffi_fix.sh
+export PKG_CONFIG_PATH="\$HOME/.heroku/vendor/lib/pkgconfig:\$PKG_CONFIG_PATH"
+EOF
+
+echo "-----> heroku-buildpack-cffi: Running"
+
+if [ ! -d "$BUILD_DIR/.heroku/vendor/lib/libffi-3.1" ]; then
+    echo "-----> Bootstrapping libffi."
+    mkdir -p $BUILD_DIR/.heroku/vendor
+    # Download and extract libffi into target vendor directory.
+    curl $VENDORED_LIBFFI -s | tar zxv -C $BUILD_DIR/.heroku/vendor &> /dev/null
+fi
